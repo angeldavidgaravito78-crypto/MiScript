@@ -1,0 +1,591 @@
+--// Chilli Egg Stealer Pro
+--// Sistema completo de robo de huevos
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local CoreGui = game:GetService("CoreGui")
+local UserInputService = game:GetService("UserInputService")
+
+local LocalPlayer = Players.LocalPlayer
+local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
+local Humanoid = Character:WaitForChild("Humanoid")
+
+--// CONFIGURACIÓN
+local Config = {
+    AutoSteal = false,
+    StealSpeed = 100, -- Velocidad de tween (ms)
+    ESP = false,
+    ESPColor = Color3.fromRGB(255, 215, 0),
+    Notification = true,
+    AntiAFK = true,
+    AutoClick = false,
+    ClickDelay = 0.1,
+    Priority = "Closest", -- Closest, Farthest, Random
+    MaxDistance = 500,
+    StealMethod = "Tween" -- Tween, Teleport, CFrame
+}
+
+--// VARIABLES
+local Eggs = {}
+local ESPObjects = {}
+local Stealing = false
+local UI = nil
+
+--// FUNCIONES UTILITARIAS
+local function Notify(title, text, duration)
+    if not Config.Notification then return end
+    
+    local notifGui = Instance.new("ScreenGui")
+    notifGui.Name = "Notification"
+    notifGui.Parent = CoreGui
+    
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 250, 0, 60)
+    frame.Position = UDim2.new(1, -260, 1, -70)
+    frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    frame.BorderSizePixel = 0
+    frame.Parent = notifGui
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = frame
+    
+    local titleLabel = Instance.new("TextLabel")
+    titleLabel.Size = UDim2.new(1, -10, 0, 20)
+    titleLabel.Position = UDim2.new(0, 5, 0, 5)
+    titleLabel.BackgroundTransparency = 1
+    titleLabel.Text = title
+    titleLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
+    titleLabel.TextSize = 14
+    titleLabel.Font = Enum.Font.GothamBold
+    titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    titleLabel.Parent = frame
+    
+    local textLabel = Instance.new("TextLabel")
+    textLabel.Size = UDim2.new(1, -10, 0, 30)
+    textLabel.Position = UDim2.new(0, 5, 0, 25)
+    textLabel.BackgroundTransparency = 1
+    textLabel.Text = text
+    textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    textLabel.TextSize = 12
+    textLabel.Font = Enum.Font.Gotham
+    textLabel.TextXAlignment = Enum.TextXAlignment.Left
+    textLabel.TextWrapped = true
+    textLabel.Parent = frame
+    
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(255, 215, 0)
+    stroke.Thickness = 1
+    stroke.Parent = frame
+    
+    -- Animación de entrada
+    frame.Position = UDim2.new(1, 20, 1, -70)
+    TweenService:Create(frame, TweenInfo.new(0.3), {
+        Position = UDim2.new(1, -260, 1, -70)
+    }):Play()
+    
+    task.delay(duration or 3, function()
+        local outTween = TweenService:Create(frame, TweenInfo.new(0.3), {
+            Position = UDim2.new(1, 20, 1, -70)
+        })
+        outTween:Play()
+        outTween.Completed:Wait()
+        notifGui:Destroy()
+    end)
+end
+
+--// SISTEMA ANTI-AFK
+if Config.AntiAFK then
+    local afkConnection = nil
+    local lastMove = tick()
+    
+    afkConnection = UserInputService.InputBegan:Connect(function()
+        lastMove = tick()
+    end)
+    
+    task.spawn(function()
+        while Config.AntiAFK do
+            task.wait(30)
+            if tick() - lastMove > 30 then
+                -- Simular movimiento mínimo
+                if Humanoid then
+                    Humanoid:Move(Vector3.new(0.1, 0, 0.1), false)
+                    task.wait(0.1)
+                    Humanoid:Move(Vector3.new(-0.1, 0, -0.1), false)
+                end
+            end
+        end
+    end)
+end
+
+--// SISTEMA DE DETECCIÓN DE HUEVOS
+local function IsEgg(obj)
+    local name = obj.Name:lower()
+    return name:find("egg") or 
+           name:find("huevo") or 
+           name:find("easter") or
+           name:find("collectible") or
+           (obj:IsA("BasePart") and obj:FindFirstChildWhichIsA("TouchInterest"))
+end
+
+local function ScanForEggs()
+    Eggs = {}
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if IsEgg(obj) and obj:IsA("BasePart") then
+            local distance = (HumanoidRootPart.Position - obj.Position).Magnitude
+            if distance <= Config.MaxDistance then
+                table.insert(Eggs, {
+                    Object = obj,
+                    Distance = distance,
+                    Position = obj.Position
+                })
+            end
+        end
+    end
+    
+    -- Ordenar según prioridad
+    if Config.Priority == "Closest" then
+        table.sort(Eggs, function(a, b) return a.Distance < b.Distance end)
+    elseif Config.Priority == "Farthest" then
+        table.sort(Eggs, function(a, b) return a.Distance > b.Distance end)
+    end
+    
+    return Eggs
+end
+
+--// SISTEMA ESP
+local function CreateESP(egg)
+    if ESPObjects[egg.Object] then return end
+    
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "EggESP"
+    billboard.AlwaysOnTop = true
+    billboard.Size = UDim2.new(0, 100, 0, 40)
+    billboard.StudsOffset = Vector3.new(0, 3, 0)
+    billboard.Parent = egg.Object
+    
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, 0, 1, 0)
+    frame.BackgroundColor3 = Config.ESPColor
+    frame.BackgroundTransparency = 0.3
+    frame.BorderSizePixel = 0
+    frame.Parent = billboard
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 4)
+    corner.Parent = frame
+    
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, -4, 1, -4)
+    label.Position = UDim2.new(0, 2, 0, 2)
+    label.BackgroundTransparency = 1
+    label.Text = "🥚 " .. egg.Object.Name .. "\n" .. math.floor(egg.Distance) .. "m"
+    label.TextColor3 = Color3.new(1, 1, 1)
+    label.TextSize = 11
+    label.Font = Enum.Font.GothamBold
+    label.Parent = frame
+    
+    ESPObjects[egg.Object] = billboard
+    
+    -- Actualizar distancia
+    task.spawn(function()
+        while ESPObjects[egg.Object] and egg.Object.Parent do
+            task.wait(0.5)
+            if HumanoidRootPart and egg.Object then
+                local dist = (HumanoidRootPart.Position - egg.Object.Position).Magnitude
+                label.Text = "🥚 " .. egg.Object.Name .. "\n" .. math.floor(dist) .. "m"
+            end
+        end
+    end)
+end
+
+local function ClearESP()
+    for obj, esp in pairs(ESPObjects) do
+        if esp then esp:Destroy() end
+    end
+    ESPObjects = {}
+end
+
+local function UpdateESP()
+    if not Config.ESP then
+        ClearESP()
+        return
+    end
+    
+    ScanForEggs()
+    for _, egg in ipairs(Eggs) do
+        CreateESP(egg)
+    end
+end
+
+--// SISTEMA DE ROBO
+local function StealEgg(egg)
+    if not egg or not egg.Object or not egg.Object.Parent then return false end
+    
+    local targetPosition = egg.Object.Position + Vector3.new(0, 3, 0)
+    
+    if Config.StealMethod == "Tween" then
+        local tween = TweenService:Create(
+            HumanoidRootPart,
+            TweenInfo.new(Config.StealSpeed / 1000, Enum.EasingStyle.Linear),
+            {CFrame = CFrame.new(targetPosition)}
+        )
+        tween:Play()
+        tween.Completed:Wait()
+        
+    elseif Config.StealMethod == "Teleport" then
+        HumanoidRootPart.CFrame = CFrame.new(targetPosition)
+        task.wait(0.1)
+        
+    elseif Config.StealMethod == "CFrame" then
+        for i = 1, 10 do
+            HumanoidRootPart.CFrame = HumanoidRootPart.CFrame:Lerp(CFrame.new(targetPosition), 0.3)
+            task.wait(0.05)
+        end
+    end
+    
+    -- Intentar recolectar
+    if egg.Object:FindFirstChildWhichIsA("TouchInterest") then
+        firetouchinterest(HumanoidRootPart, egg.Object, 0)
+        task.wait(0.05)
+        firetouchinterest(HumanoidRootPart, egg.Object, 1)
+    end
+    
+    -- Auto-click si está activado
+    if Config.AutoClick then
+        local clickDetector = egg.Object:FindFirstChildWhichIsA("ClickDetector")
+        if clickDetector then
+            fireclickdetector(clickDetector)
+        end
+    end
+    
+    Notify("Huevo Robado!", "Has recolectado: " .. egg.Object.Name, 2)
+    return true
+end
+
+local function AutoStealLoop()
+    while Config.AutoSteal do
+        ScanForEggs()
+        
+        if #Eggs > 0 then
+            local target = Config.Priority == "Random" and Eggs[math.random(1, #Eggs)] or Eggs[1]
+            StealEgg(target)
+            task.wait(Config.ClickDelay)
+        else
+            task.wait(1)
+        end
+    end
+end
+
+--// CREACIÓN DE UI MODERNA
+local function CreateUI()
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "EggStealerPro"
+    screenGui.Parent = CoreGui
+    
+    -- Frame principal
+    local mainFrame = Instance.new("Frame")
+    mainFrame.Name = "Main"
+    mainFrame.Size = UDim2.new(0, 300, 0, 400)
+    mainFrame.Position = UDim2.new(0.5, -150, 0.5, -200)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+    mainFrame.BorderSizePixel = 0
+    mainFrame.Parent = screenGui
+    
+    -- Esquinas redondeadas
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 12)
+    corner.Parent = mainFrame
+    
+    -- Barra de título
+    local titleBar = Instance.new("Frame")
+    titleBar.Name = "TitleBar"
+    titleBar.Size = UDim2.new(1, 0, 0, 40)
+    titleBar.BackgroundColor3 = Color3.fromRGB(255, 215, 0)
+    titleBar.BorderSizePixel = 0
+    titleBar.Parent = mainFrame
+    
+    local titleCorner = Instance.new("UICorner")
+    titleCorner.CornerRadius = UDim.new(0, 12)
+    titleCorner.Parent = titleBar
+    
+    local titleLabel = Instance.new("TextLabel")
+    titleLabel.Size = UDim2.new(1, -40, 1, 0)
+    titleLabel.Position = UDim2.new(0, 15, 0, 0)
+    titleLabel.BackgroundTransparency = 1
+    titleLabel.Text = "🥚 Egg Stealer Pro"
+    titleLabel.TextColor3 = Color3.fromRGB(0, 0, 0)
+    titleLabel.TextSize = 18
+    titleLabel.Font = Enum.Font.GothamBold
+    titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    titleLabel.Parent = titleBar
+    
+    -- Botón cerrar
+    local closeBtn = Instance.new("TextButton")
+    closeBtn.Size = UDim2.new(0, 30, 0, 30)
+    closeBtn.Position = UDim2.new(1, -35, 0, 5)
+    closeBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+    closeBtn.Text = "X"
+    closeBtn.TextColor3 = Color3.new(1, 1, 1)
+    closeBtn.TextSize = 14
+    closeBtn.Font = Enum.Font.GothamBold
+    closeBtn.Parent = titleBar
+    
+    local closeCorner = Instance.new("UICorner")
+    closeCorner.CornerRadius = UDim.new(0, 6)
+    closeCorner.Parent = closeBtn
+    
+    -- Contenido
+    local content = Instance.new("ScrollingFrame")
+    content.Name = "Content"
+    content.Size = UDim2.new(1, -20, 1, -60)
+    content.Position = UDim2.new(0, 10, 0, 50)
+    content.BackgroundTransparency = 1
+    content.ScrollBarThickness = 4
+    content.CanvasSize = UDim2.new(0, 0, 0, 350)
+    content.Parent = mainFrame
+    
+    local layout = Instance.new("UIListLayout")
+    layout.Padding = UDim.new(0, 10)
+    layout.Parent = content
+    
+    -- Función para crear toggle
+    local function CreateToggle(parent, text, configKey, callback)
+        local frame = Instance.new("Frame")
+        frame.Size = UDim2.new(1, 0, 0, 40)
+        frame.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+        frame.BorderSizePixel = 0
+        frame.Parent = parent
+        
+        local frameCorner = Instance.new("UICorner")
+        frameCorner.CornerRadius = UDim.new(0, 8)
+        frameCorner.Parent = frame
+        
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(0.6, 0, 1, 0)
+        label.Position = UDim2.new(0, 10, 0, 0)
+        label.BackgroundTransparency = 1
+        label.Text = text
+        label.TextColor3 = Color3.new(1, 1, 1)
+        label.TextSize = 14
+        label.Font = Enum.Font.Gotham
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Parent = frame
+        
+        local toggle = Instance.new("TextButton")
+        toggle.Size = UDim2.new(0, 50, 0, 24)
+        toggle.Position = UDim2.new(1, -60, 0.5, -12)
+        toggle.BackgroundColor3 = Config[configKey] and Color3.fromRGB(0, 200, 100) or Color3.fromRGB(100, 100, 100)
+        toggle.Text = Config[configKey] and "ON" or "OFF"
+        toggle.TextColor3 = Color3.new(1, 1, 1)
+        toggle.TextSize = 12
+        toggle.Font = Enum.Font.GothamBold
+        toggle.Parent = frame
+        
+        local toggleCorner = Instance.new("UICorner")
+        toggleCorner.CornerRadius = UDim.new(0, 12)
+        toggleCorner.Parent = toggle
+        
+        toggle.MouseButton1Click:Connect(function()
+            Config[configKey] = not Config[configKey]
+            toggle.BackgroundColor3 = Config[configKey] and Color3.fromRGB(0, 200, 100) or Color3.fromRGB(100, 100, 100)
+            toggle.Text = Config[configKey] and "ON" or "OFF"
+            
+            if callback then callback(Config[configKey]) end
+            
+            if configKey == "AutoSteal" and Config.AutoSteal then
+                task.spawn(AutoStealLoop)
+            end
+            
+            if configKey == "ESP" then
+                UpdateESP()
+            end
+        end)
+        
+        return toggle
+    end
+    
+    -- Función para crear slider
+    local function CreateSlider(parent, text, configKey, min, max)
+        local frame = Instance.new("Frame")
+        frame.Size = UDim2.new(1, 0, 0, 60)
+        frame.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+        frame.BorderSizePixel = 0
+        frame.Parent = parent
+        
+        local frameCorner = Instance.new("UICorner")
+        frameCorner.CornerRadius = UDim.new(0, 8)
+        frameCorner.Parent = frame
+        
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(1, -20, 0, 20)
+        label.Position = UDim2.new(0, 10, 0, 5)
+        label.BackgroundTransparency = 1
+        label.Text = text .. ": " .. Config[configKey]
+        label.TextColor3 = Color3.new(1, 1, 1)
+        label.TextSize = 14
+        label.Font = Enum.Font.Gotham
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Parent = frame
+        
+        local sliderBg = Instance.new("Frame")
+        sliderBg.Size = UDim2.new(1, -20, 0, 8)
+        sliderBg.Position = UDim2.new(0, 10, 0, 35)
+        sliderBg.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+        sliderBg.BorderSizePixel = 0
+        sliderBg.Parent = frame
+        
+        local sliderCorner = Instance.new("UICorner")
+        sliderCorner.CornerRadius = UDim.new(0, 4)
+        sliderCorner.Parent = sliderBg
+        
+        local sliderFill = Instance.new("Frame")
+        local percent = (Config[configKey] - min) / (max - min)
+        sliderFill.Size = UDim2.new(percent, 0, 1, 0)
+        sliderFill.BackgroundColor3 = Color3.fromRGB(255, 215, 0)
+        sliderFill.BorderSizePixel = 0
+        sliderFill.Parent = sliderBg
+        
+        local fillCorner = Instance.new("UICorner")
+        fillCorner.CornerRadius = UDim.new(0, 4)
+        fillCorner.Parent = sliderFill
+        
+        local dragging = false
+        
+        sliderBg.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                dragging = true
+            end
+        end)
+        
+        UserInputService.InputChanged:Connect(function(input)
+            if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+                local pos = math.clamp((input.Position.X - sliderBg.AbsolutePosition.X) / sliderBg.AbsoluteSize.X, 0, 1)
+                sliderFill.Size = UDim2.new(pos, 0, 1, 0)
+                Config[configKey] = math.floor(min + (max - min) * pos)
+                label.Text = text .. ": " .. Config[configKey]
+            end
+        end)
+        
+        UserInputService.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                dragging = false
+            end
+        end)
+    end
+    
+    -- Crear controles
+    CreateToggle(content, "🎯 Auto Robar Huevos", "AutoSteal")
+    CreateToggle(content, "👁️ ESP (Ver a través)", "ESP", function() UpdateESP() end)
+    CreateToggle(content, "🔔 Notificaciones", "Notification")
+    CreateToggle(content, "🖱️ Auto Click", "AutoClick")
+    CreateToggle(content, "💤 Anti-AFK", "AntiAFK")
+    
+    CreateSlider(content, "⚡ Velocidad (ms)", "StealSpeed", 50, 500)
+    CreateSlider(content, "📏 Distancia Máxima", "MaxDistance", 100, 1000)
+    
+    -- Botón escanear
+    local scanBtn = Instance.new("TextButton")
+    scanBtn.Size = UDim2.new(1, 0, 0, 40)
+    scanBtn.BackgroundColor3 = Color3.fromRGB(255, 215, 0)
+    scanBtn.Text = "🔍 Escanear Huevos"
+    scanBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+    scanBtn.TextSize = 14
+    scanBtn.Font = Enum.Font.GothamBold
+    scanBtn.Parent = content
+    
+    local scanCorner = Instance.new("UICorner")
+    scanCorner.CornerRadius = UDim.new(0, 8)
+    scanCorner.Parent = scanBtn
+    
+    scanBtn.MouseButton1Click:Connect(function()
+        ScanForEggs()
+        Notify("Escaneo Completo", "Se encontraron " .. #Eggs .. " huevos", 2)
+        if Config.ESP then UpdateESP() end
+    end)
+    
+    -- Info de huevos encontrados
+    local infoLabel = Instance.new("TextLabel")
+    infoLabel.Size = UDim2.new(1, 0, 0, 30)
+    infoLabel.BackgroundTransparency = 1
+    infoLabel.Text = "Huevos encontrados: 0"
+    infoLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+    infoLabel.TextSize = 12
+    infoLabel.Font = Enum.Font.Gotham
+    infoLabel.Parent = content
+    
+    -- Actualizar contador
+    task.spawn(function()
+        while screenGui.Parent do
+            task.wait(1)
+            infoLabel.Text = "Huevos encontrados: " .. #Eggs
+        end
+    end)
+    
+    -- Hacer arrastrable
+    local dragging = false
+    local dragInput = nil
+    local dragStart = nil
+    local startPos = nil
+    
+    titleBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            dragStart = input.Position
+            startPos = mainFrame.Position
+        end
+    end)
+    
+    titleBar.InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local delta = input.Position - dragStart
+            mainFrame.Position = UDim2.new(
+                startPos.X.Scale,
+                startPos.X.Offset + delta.X,
+                startPos.Y.Scale,
+                startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+    
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
+    end)
+    
+    -- Cerrar
+    closeBtn.MouseButton1Click:Connect(function()
+        Config.AutoSteal = false
+        Config.ESP = false
+        ClearESP()
+        screenGui:Destroy()
+    end)
+    
+    UI = screenGui
+    Notify("Script Cargado", "Egg Stealer Pro activado!", 3)
+end
+
+--// INICIALIZACIÓN
+CreateUI()
+
+--// ESCUCHAR NUEVOS HUEVOS
+Workspace.DescendantAdded:Connect(function(obj)
+    if IsEgg(obj) and Config.ESP then
+        task.wait(0.5)
+        ScanForEggs()
+        UpdateESP()
+    end
+end)
+
+--// ACTUALIZAR CHARACTER
+LocalPlayer.CharacterAdded:Connect(function(char)
+    Character = char
+    HumanoidRootPart = char:WaitForChild("HumanoidRootPart")
+    Humanoid = char:WaitForChild("Humanoid")
+end)
+
+print("Egg Stealer Pro - Cargado correctamente")
