@@ -1,0 +1,334 @@
+--// MVS DUELS AIMBOT + ESP - DELTA VERSION
+--// Optimizado para Android/Móvil
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local Camera = Workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+
+--// CONFIGURACIÓN
+local Config = {
+    AimbotEnabled = false,
+    ESPenabled = false,
+    TeamCheck = true,
+    AimPart = "HumanoidRootPart",
+    AimOffset = Vector3.new(0, 0.8, 0),
+    Smoothness = 0.1,
+    FOV = 200,
+    WallCheck = false,
+    ESPMaxDistance = 1000
+}
+
+--// VARIABLES
+local CurrentTarget = nil
+local ESPObjects = {}
+local AimbotActive = false
+
+--// FUNCIONES UTILITARIAS
+
+local function IsPlayerValid(player)
+    if player == LocalPlayer then return false end
+    if not player.Character then return false end
+    if not player.Character:FindFirstChild("HumanoidRootPart") then return false end
+    if not player.Character:FindFirstChild("Humanoid") then return false end
+    if player.Character.Humanoid.Health <= 0 then return false end
+    
+    if Config.TeamCheck and player.Team == LocalPlayer.Team then
+        return false
+    end
+    
+    return true
+end
+
+local function GetAimPosition(character)
+    local hrp = character:FindFirstChild(Config.AimPart)
+    if hrp then
+        return hrp.Position + Config.AimOffset
+    end
+    return nil
+end
+
+local function GetClosestPlayer()
+    local closest = nil
+    local shortestDistance = Config.FOV
+    local center = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+    
+    for _, player in pairs(Players:GetPlayers()) do
+        if not IsPlayerValid(player) then continue end
+        
+        local aimPos = GetAimPosition(player.Character)
+        if not aimPos then continue end
+        
+        local screenPos, onScreen = Camera:WorldToViewportPoint(aimPos)
+        if not onScreen then continue end
+        
+        local distance = (Vector2.new(screenPos.X, screenPos.Y) - center).Magnitude
+        if distance < shortestDistance then
+            shortestDistance = distance
+            closest = player
+        end
+    end
+    
+    return closest
+end
+
+--// SISTEMA ESP SIMPLE
+
+local function CreateESP(player)
+    if player == LocalPlayer then return end
+    
+    local esp = {
+        Box = Instance.new("BillboardGui"),
+        Name = Instance.new("TextLabel")
+    }
+    
+    esp.Box.Name = "ESP_Box"
+    esp.Box.AlwaysOnTop = true
+    esp.Box.Size = UDim2.new(0, 100, 0, 100)
+    esp.Box.StudsOffset = Vector3.new(0, 2, 0)
+    esp.Box.Parent = player.Character and player.Character:FindFirstChild("HumanoidRootPart") or nil
+    
+    esp.Name.Parent = esp.Box
+    esp.Name.Size = UDim2.new(1, 0, 0, 20)
+    esp.Name.BackgroundTransparency = 1
+    esp.Name.TextColor3 = Color3.fromRGB(255, 0, 0)
+    esp.Name.TextStrokeTransparency = 0
+    esp.Name.TextSize = 14
+    esp.Name.Text = player.Name
+    
+    ESPObjects[player] = esp
+    
+    -- Actualizar posición
+    local connection
+    connection = RunService.RenderStepped:Connect(function()
+        if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then
+            esp.Box.Enabled = false
+            return
+        end
+        
+        if not Config.ESPenabled then
+            esp.Box.Enabled = false
+            return
+        end
+        
+        local distance = (Camera.CFrame.Position - player.Character.HumanoidRootPart.Position).Magnitude
+        if distance > Config.ESPMaxDistance then
+            esp.Box.Enabled = false
+            return
+        end
+        
+        esp.Box.Adornee = player.Character.HumanoidRootPart
+        esp.Box.Enabled = true
+        
+        -- Color según equipo
+        if player.Team == LocalPlayer.Team then
+            esp.Name.TextColor3 = Color3.fromRGB(0, 255, 0)
+        else
+            esp.Name.TextColor3 = Color3.fromRGB(255, 0, 0)
+        end
+        
+        esp.Name.Text = player.Name .. " [" .. math.floor(distance) .. "m]"
+    end)
+    
+    player.AncestryChanged:Connect(function()
+        if not player:IsDescendantOf(game) then
+            connection:Disconnect()
+            esp.Box:Destroy()
+            ESPObjects[player] = nil
+        end
+    end)
+end
+
+--// CREAR GUI PARA DELTA
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "MVSDuelsMobile"
+ScreenGui.ResetOnSpawn = false
+
+-- Para Delta Android
+pcall(function()
+    ScreenGui.Parent = game.CoreGui
+end)
+
+if not ScreenGui.Parent then
+    ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+end
+
+-- Frame principal
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainMenu"
+MainFrame.Size = UDim2.new(0, 200, 0, 280)
+MainFrame.Position = UDim2.new(0, 10, 0.5, -140)
+MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
+
+local Corner = Instance.new("UICorner")
+Corner.CornerRadius = UDim.new(0, 10)
+Corner.Parent = MainFrame
+
+-- Título
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 35)
+Title.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+Title.Text = "MVS DUELS"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.TextSize = 18
+Title.Font = Enum.Font.GothamBold
+Title.Parent = MainFrame
+
+local TitleCorner = Instance.new("UICorner")
+TitleCorner.CornerRadius = UDim.new(0, 10)
+TitleCorner.Parent = Title
+
+-- Función para crear botones
+local function CreateButton(text, yPos, callback)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0.9, 0, 0, 40)
+    btn.Position = UDim2.new(0.05, 0, 0, yPos)
+    btn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+    btn.Text = text
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.TextSize = 14
+    btn.Font = Enum.Font.GothamBold
+    btn.Parent = MainFrame
+    
+    local btnCorner = Instance.new("UICorner")
+    btnCorner.CornerRadius = UDim.new(0, 8)
+    btnCorner.Parent = btn
+    
+    btn.MouseButton1Click:Connect(function()
+        callback()
+        -- Animación
+        btn.BackgroundColor3 = Color3.fromRGB(80, 80, 90)
+        wait(0.1)
+        btn.BackgroundColor3 = Config[text:gsub(" ", "")] and Color3.fromRGB(0, 150, 80) or Color3.fromRGB(60, 60, 70)
+    end)
+    
+    return btn
+end
+
+-- Botón Aimbot Toggle
+local AimbotBtn = CreateButton("Aimbot", 50, function()
+    Config.AimbotEnabled = not Config.AimbotEnabled
+    AimbotBtn.Text = Config.AimbotEnabled and "Aimbot: ON" or "Aimbot: OFF"
+    AimbotBtn.BackgroundColor3 = Config.AimbotEnabled and Color3.fromRGB(0, 150, 80) or Color3.fromRGB(60, 60, 70)
+end)
+
+-- Botón ESP Toggle
+local ESPBtn = CreateButton("ESP", 100, function()
+    Config.ESPenabled = not Config.ESPenabled
+    ESPBtn.Text = Config.ESPenabled and "ESP: ON" or "ESP: OFF"
+    ESPBtn.BackgroundColor3 = Config.ESPenabled and Color3.fromRGB(0, 150, 80) or Color3.fromRGB(60, 60, 70)
+end)
+
+-- Botón TeamCheck Toggle
+local TeamBtn = CreateButton("Team Check", 150, function()
+    Config.TeamCheck = not Config.TeamCheck
+    TeamBtn.Text = Config.TeamCheck and "Team Check: ON" or "Team Check: OFF"
+    TeamBtn.BackgroundColor3 = Config.TeamCheck and Color3.fromRGB(0, 150, 80) or Color3.fromRGB(60, 60, 70)
+end)
+
+-- Botón Aimbot Hold (para móvil - mantener presionado)
+local AimHoldBtn = Instance.new("TextButton")
+AimHoldBtn.Size = UDim2.new(0.9, 0, 0, 50)
+AimHoldBtn.Position = UDim2.new(0.05, 0, 0, 200)
+AimHoldBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+AimHoldBtn.Text = "MANTENER PARA AIM"
+AimHoldBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+AimHoldBtn.TextSize = 14
+AimHoldBtn.Font = Enum.Font.GothamBold
+AimHoldBtn.Parent = MainFrame
+
+local aimCorner = Instance.new("UICorner")
+aimCorner.CornerRadius = UDim.new(0, 8)
+aimCorner.Parent = AimHoldBtn
+
+-- Eventos táctiles para el botón de aim
+AimHoldBtn.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        AimbotActive = true
+        AimHoldBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+    end
+end)
+
+AimHoldBtn.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        AimbotActive = false
+        AimHoldBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+        CurrentTarget = nil
+    end
+end)
+
+-- Botón ocultar/mostrar menú
+local ToggleBtn = Instance.new("TextButton")
+ToggleBtn.Size = UDim2.new(0, 50, 0, 50)
+ToggleBtn.Position = UDim2.new(0, 10, 0, 10)
+ToggleBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+ToggleBtn.Text = "MVS"
+ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleBtn.TextSize = 12
+ToggleBtn.Font = Enum.Font.GothamBold
+ToggleBtn.Parent = ScreenGui
+
+local toggleCorner = Instance.new("UICorner")
+toggleCorner.CornerRadius = UDim.new(1, 0)
+toggleCorner.Parent = ToggleBtn
+
+ToggleBtn.MouseButton1Click:Connect(function()
+    MainFrame.Visible = not MainFrame.Visible
+end)
+
+--// INICIALIZAR ESP PARA JUGADORES EXISTENTES
+
+for _, player in pairs(Players:GetPlayers()) do
+    if player ~= LocalPlayer then
+        CreateESP(player)
+    end
+end
+
+Players.PlayerAdded:Connect(function(player)
+    if player ~= LocalPlayer then
+        CreateESP(player)
+    end
+end)
+
+--// LOOP PRINCIPAL
+
+RunService.RenderStepped:Connect(function()
+    -- Actualizar ESP
+    for player, esp in pairs(ESPObjects) do
+        if esp.Box then
+            esp.Box.Enabled = Config.ESPenabled and IsPlayerValid(player)
+        end
+    end
+    
+    -- Aimbot
+    if Config.AimbotEnabled and AimbotActive then
+        CurrentTarget = GetClosestPlayer()
+        
+        if CurrentTarget and CurrentTarget.Character then
+            local aimPos = GetAimPosition(CurrentTarget.Character)
+            if aimPos then
+                local cameraCF = Camera.CFrame
+                local targetCF = CFrame.new(cameraCF.Position, aimPos)
+                Camera.CFrame = cameraCF:Lerp(targetCF, 1 - Config.Smoothness)
+            end
+        end
+    else
+        CurrentTarget = nil
+    end
+end)
+
+--// NOTIFICACIÓN
+
+game:GetService("StarterGui"):SetCore("SendNotification", {
+    Title = "MVS DUELS",
+    Text = "Script cargado! Usa el menú flotante",
+    Duration = 3
+})
+
+print("=== MVS DUELS DELTA CARGADO ===")
