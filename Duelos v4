@@ -1,0 +1,517 @@
+--// Servicios
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local Camera = Workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+
+--// ConfiguraciÃ³n
+local Config = {
+    Aimbot = {
+        Enabled = false,
+        Smoothness = 0.12,
+        FOV = 200,
+        TeamCheck = true,
+        WallCheck = false,
+        TargetPart = "Head",
+        AutoShoot = false
+    },
+    ESP = {
+        Enabled = true,
+        TeamCheck = true,
+        ShowName = true,
+        ShowDistance = true,
+        ShowHealth = true,
+        MaxDistance = 500,
+        TextSize = 11,
+        EnemyColor = Color3.fromRGB(255, 50, 50),
+        BoxEnabled = true
+    }
+}
+
+--// Variables
+local ESPObjects = {}
+local AimbotTarget = nil
+local ScreenGui = nil
+local AimbotButton = nil
+local StatusFrame = nil
+local Dragging = false
+local DragStart = nil
+local StartPos = nil
+
+--// Crear UI Mobile
+local function CreateMobileUI()
+    if ScreenGui then ScreenGui:Destroy() end
+    
+    ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = "MobileAimbot"
+    ScreenGui.Parent = game:GetService("CoreGui")
+    ScreenGui.ResetOnSpawn = false
+    
+    --// Marco de estado (parte superior)
+    StatusFrame = Instance.new("Frame")
+    StatusFrame.Size = UDim2.new(0, 180, 0, 50)
+    StatusFrame.Position = UDim2.new(0.5, -90, 0, 10)
+    StatusFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    StatusFrame.BorderSizePixel = 0
+    StatusFrame.Parent = ScreenGui
+    
+    local Corner1 = Instance.new("UICorner")
+    Corner1.CornerRadius = UDim.new(0, 10)
+    Corner1.Parent = StatusFrame
+    
+    local Stroke1 = Instance.new("UIStroke")
+    Stroke1.Color = Color3.fromRGB(100, 100, 100)
+    Stroke1.Thickness = 2
+    Stroke1.Parent = StatusFrame
+    
+    --// Indicador de estado (cÃ­rculo)
+    local StatusCircle = Instance.new("Frame")
+    StatusCircle.Name = "StatusIndicator"
+    StatusCircle.Size = UDim2.new(0, 20, 0, 20)
+    StatusCircle.Position = UDim2.new(0, 15, 0.5, -10)
+    StatusCircle.BackgroundColor3 = Color3.fromRGB(255, 50, 50) -- Rojo = OFF
+    StatusCircle.BorderSizePixel = 0
+    StatusCircle.Parent = StatusFrame
+    
+    local CircleCorner = Instance.new("UICorner")
+    CircleCorner.CornerRadius = UDim.new(1, 0)
+    CircleCorner.Parent = StatusCircle
+    
+    --// Texto de estado
+    local StatusText = Instance.new("TextLabel")
+    StatusText.Name = "StatusText"
+    StatusText.Size = UDim2.new(1, -50, 1, 0)
+    StatusText.Position = UDim2.new(0, 45, 0, 0)
+    StatusText.BackgroundTransparency = 1
+    StatusText.Text = "AIMBOT: OFF"
+    StatusText.TextColor3 = Color3.fromRGB(255, 255, 255)
+    StatusText.TextSize = 14
+    StatusText.Font = Enum.Font.GothamBold
+    StatusText.TextXAlignment = Enum.TextXAlignment.Left
+    StatusText.Parent = StatusFrame
+    
+    --// BotÃ³n flotante de Aimbot (DRAGGABLE)
+    AimbotButton = Instance.new("TextButton")
+    AimbotButton.Name = "AimbotToggle"
+    AimbotButton.Size = UDim2.new(0, 80, 0, 80)
+    AimbotButton.Position = UDim2.new(1, -100, 1, -180)
+    AimbotButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50) -- Rojo
+    AimbotButton.Text = "AIM\nOFF"
+    AimbotButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    AimbotButton.TextSize = 14
+    AimbotButton.Font = Enum.Font.GothamBold
+    AimbotButton.Parent = ScreenGui
+    AimbotButton.Active = true
+    AimbotButton.Draggable = false
+    
+    local ButtonCorner = Instance.new("UICorner")
+    ButtonCorner.CornerRadius = UDim.new(1, 0) -- CÃ­rculo perfecto
+    ButtonCorner.Parent = AimbotButton
+    
+    local ButtonStroke = Instance.new("UIStroke")
+    ButtonStroke.Color = Color3.fromRGB(255, 255, 255)
+    ButtonStroke.Thickness = 3
+    ButtonStroke.Parent = AimbotButton
+    
+    --// Efecto de brillo
+    local Glow = Instance.new("ImageLabel")
+    Glow.Name = "Glow"
+    Glow.Size = UDim2.new(1.5, 0, 1.5, 0)
+    Glow.Position = UDim2.new(-0.25, 0, -0.25, 0)
+    Glow.BackgroundTransparency = 1
+    Glow.Image = "rbxassetid://10822646374" -- Glow asset
+    Glow.ImageColor3 = Color3.fromRGB(255, 50, 50)
+    Glow.ImageTransparency = 0.7
+    Glow.Parent = AimbotButton
+    
+    --// Sistema de arrastre (Drag) para el botÃ³n
+    local function UpdateDrag(input)
+        local delta = input.Position - DragStart
+        AimbotButton.Position = UDim2.new(StartPos.X.Scale, StartPos.X.Offset + delta.X, 
+                                          StartPos.Y.Scale, StartPos.Y.Offset + delta.Y)
+    end
+    
+    AimbotButton.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            Dragging = true
+            DragStart = input.Position
+            StartPos = AimbotButton.Position
+            
+            -- Efecto de escala al tocar
+            TweenService:Create(AimbotButton, TweenInfo.new(0.1), {Size = UDim2.new(0, 75, 0, 75)}):Play()
+            
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    Dragging = false
+                    TweenService:Create(AimbotButton, TweenInfo.new(0.1), {Size = UDim2.new(0, 80, 0, 80)}):Play()
+                    
+                    -- Si no se moviÃ³ mucho, es un click
+                    local delta = (input.Position - DragStart).Magnitude
+                    if delta < 5 then
+                        -- TOGGLE AIMBOT
+                        Config.Aimbot.Enabled = not Config.Aimbot.Enabled
+                        
+                        if Config.Aimbot.Enabled then
+                            -- ACTIVADO - VERDE
+                            AimbotButton.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+                            AimbotButton.Text = "AIM\nON"
+                            StatusCircle.BackgroundColor3 = Color3.fromRGB(50, 255, 50)
+                            StatusText.Text = "AIMBOT: ON"
+                            Glow.ImageColor3 = Color3.fromRGB(50, 255, 50)
+                            
+                            -- AnimaciÃ³n de activaciÃ³n
+                            TweenService:Create(AimbotButton, TweenInfo.new(0.3), 
+                                {BackgroundColor3 = Color3.fromRGB(50, 200, 50)}):Play()
+                        else
+                            -- DESACTIVADO - ROJO
+                            AimbotButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+                            AimbotButton.Text = "AIM\nOFF"
+                            StatusCircle.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+                            StatusText.Text = "AIMBOT: OFF"
+                            Glow.ImageColor3 = Color3.fromRGB(255, 50, 50)
+                        end
+                    end
+                end
+            end)
+        end
+    end)
+    
+    AimbotButton.InputChanged:Connect(function(input)
+        if Dragging and (input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement) then
+            UpdateDrag(input)
+        end
+    end)
+    
+    --// BotÃ³n de configuraciÃ³n (pequeÃ±o, esquina)
+    local SettingsBtn = Instance.new("TextButton")
+    SettingsBtn.Size = UDim2.new(0, 40, 0, 40)
+    SettingsBtn.Position = UDim2.new(0, 10, 1, -60)
+    SettingsBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+    SettingsBtn.Text = "âš™ï¸"
+    SettingsBtn.TextSize = 20
+    SettingsBtn.Parent = ScreenGui
+    
+    local SettingsCorner = Instance.new("UICorner")
+    SettingsCorner.CornerRadius = UDim.new(0, 8)
+    SettingsCorner.Parent = SettingsBtn
+    
+    --// Panel de configuraciÃ³n simple
+    local SettingsFrame = Instance.new("Frame")
+    SettingsFrame.Size = UDim2.new(0, 250, 0, 200)
+    SettingsFrame.Position = UDim2.new(0, 10, 1, -270)
+    SettingsFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+    SettingsFrame.BorderSizePixel = 0
+    SettingsFrame.Visible = false
+    SettingsFrame.Parent = ScreenGui
+    
+    local SettingsFrameCorner = Instance.new("UICorner")
+    SettingsFrameCorner.CornerRadius = UDim.new(0, 12)
+    SettingsFrameCorner.Parent = SettingsFrame
+    
+    -- TÃ­tulo
+    local Title = Instance.new("TextLabel")
+    Title.Size = UDim2.new(1, 0, 0, 30)
+    Title.BackgroundTransparency = 1
+    Title.Text = "CONFIGURACIÃ“N"
+    Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Title.TextSize = 14
+    Title.Font = Enum.Font.GothamBold
+    Title.Parent = SettingsFrame
+    
+    -- Toggle Team Check
+    local TeamCheckBtn = Instance.new("TextButton")
+    TeamCheckBtn.Size = UDim2.new(0.9, 0, 0, 35)
+    TeamCheckBtn.Position = UDim2.new(0.05, 0, 0, 40)
+    TeamCheckBtn.BackgroundColor3 = Config.Aimbot.TeamCheck and Color3.fromRGB(50, 150, 50) or Color3.fromRGB(150, 50, 50)
+    TeamCheckBtn.Text = "Team Check: " .. (Config.Aimbot.TeamCheck and "ON" or "OFF")
+    TeamCheckBtn.TextColor3 = Color3.new(1, 1, 1)
+    TeamCheckBtn.Parent = SettingsFrame
+    
+    TeamCheckBtn.MouseButton1Click:Connect(function()
+        Config.Aimbot.TeamCheck = not Config.Aimbot.TeamCheck
+        Config.ESP.TeamCheck = Config.Aimbot.TeamCheck
+        TeamCheckBtn.BackgroundColor3 = Config.Aimbot.TeamCheck and Color3.fromRGB(50, 150, 50) or Color3.fromRGB(150, 50, 50)
+        TeamCheckBtn.Text = "Team Check: " .. (Config.Aimbot.TeamCheck and "ON" or "OFF")
+    end)
+    
+    -- Toggle ESP
+    local ESPBtn = Instance.new("TextButton")
+    ESPBtn.Size = UDim2.new(0.9, 0, 0, 35)
+    ESPBtn.Position = UDim2.new(0.05, 0, 0, 85)
+    ESPBtn.BackgroundColor3 = Config.ESP.Enabled and Color3.fromRGB(50, 150, 50) or Color3.fromRGB(150, 50, 50)
+    ESPBtn.Text = "ESP: " .. (Config.ESP.Enabled and "ON" or "OFF")
+    ESPBtn.TextColor3 = Color3.new(1, 1, 1)
+    ESPBtn.Parent = SettingsFrame
+    
+    ESPBtn.MouseButton1Click:Connect(function()
+        Config.ESP.Enabled = not Config.ESP.Enabled
+        ESPBtn.BackgroundColor3 = Config.ESP.Enabled and Color3.fromRGB(50, 150, 50) or Color3.fromRGB(150, 50, 50)
+        ESPBtn.Text = "ESP: " .. (Config.ESP.Enabled and "ON" or "OFF")
+    end)
+    
+    -- Cerrar
+    local CloseBtn = Instance.new("TextButton")
+    CloseBtn.Size = UDim2.new(0.9, 0, 0, 35)
+    CloseBtn.Position = UDim2.new(0.05, 0, 0, 150)
+    CloseBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+    CloseBtn.Text = "CERRAR"
+    CloseBtn.TextColor3 = Color3.new(1, 1, 1)
+    CloseBtn.Parent = SettingsFrame
+    
+    CloseBtn.MouseButton1Click:Connect(function()
+        SettingsFrame.Visible = false
+    end)
+    
+    SettingsBtn.MouseButton1Click:Connect(function()
+        SettingsFrame.Visible = not SettingsFrame.Visible
+    end)
+end
+
+--// Verificar si es enemigo
+local function IsEnemy(player)
+    if not Config.Aimbot.TeamCheck then return true end
+    if not player.Team or not LocalPlayer.Team then return true end
+    return player.Team ~= LocalPlayer.Team
+end
+
+--// Obtener enemigos
+local function GetEnemies()
+    local enemies = {}
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and IsEnemy(player) then
+            table.insert(enemies, player)
+        end
+    end
+    return enemies
+end
+
+--// Obtener objetivo mÃ¡s cercano al centro de la pantalla (mejor para mÃ³vil)
+local function GetClosestToCenter()
+    local closestPlayer = nil
+    local shortestDistance = Config.Aimbot.FOV
+    local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+    
+    for _, player in pairs(GetEnemies()) do
+        local character = player.Character
+        if not character then continue end
+        
+        local targetPart = character:FindFirstChild(Config.Aimbot.TargetPart)
+        if not targetPart then continue end
+        
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        if not humanoid or humanoid.Health <= 0 then continue end
+        
+        local pos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
+        if not onScreen then continue end
+        
+        local distance = (Vector2.new(pos.X, pos.Y) - screenCenter).Magnitude
+        
+        if distance < shortestDistance then
+            closestPlayer = player
+            shortestDistance = distance
+        end
+    end
+    
+    return closestPlayer
+end
+
+--// FunciÃ³n de Aimbot suavizado
+local function RunAimbot()
+    if not Config.Aimbot.Enabled then return end
+    
+    local target = GetClosestToCenter()
+    if target and target.Character then
+        local targetPart = target.Character:FindFirstChild(Config.Aimbot.TargetPart)
+        if targetPart then
+            local targetPos = Camera:WorldToViewportPoint(targetPart.Position)
+            local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+            
+            local delta = Vector2.new(targetPos.X - screenCenter.X, targetPos.Y - screenCenter.Y)
+            
+            -- Suavizado exponencial
+            local smooth = Config.Aimbot.Smoothness
+            local moveX = delta.X * smooth
+            local moveY = delta.Y * smooth
+            
+            -- Mover cÃ¡mara
+            Camera.CFrame = CFrame.new(Camera.CFrame.Position) * CFrame.Angles(0, -math.rad(moveX * 0.1), 0)
+            Camera.CFrame = Camera.CFrame * CFrame.Angles(-math.rad(moveY * 0.1), 0, 0)
+        end
+    end
+end
+
+--// ESP para mÃ³vil (optimizado)
+local function CreateESP(player)
+    if ESPObjects[player] then return end
+    
+    local esp = {
+        Player = player,
+        Elements = {},
+        Connection = nil
+    }
+    
+    -- Crear elementos visuales
+    local nameTag = Instance.new("TextLabel")
+    nameTag.Size = UDim2.new(0, 150, 0, 18)
+    nameTag.BackgroundTransparency = 1
+    nameTag.TextColor3 = Config.ESP.EnemyColor
+    nameTag.TextSize = Config.ESP.TextSize
+    nameTag.Font = Enum.Font.GothamBold
+    nameTag.TextStrokeTransparency = 0.3
+    nameTag.TextStrokeColor3 = Color3.new(0, 0, 0)
+    nameTag.Parent = ScreenGui
+    
+    local distTag = Instance.new("TextLabel")
+    distTag.Size = UDim2.new(0, 150, 0, 14)
+    distTag.BackgroundTransparency = 1
+    distTag.TextColor3 = Color3.fromRGB(200, 200, 200)
+    distTag.TextSize = Config.ESP.TextSize - 1
+    distTag.Font = Enum.Font.Gotham
+    distTag.TextStrokeTransparency = 0.3
+    distTag.TextStrokeColor3 = Color3.new(0, 0, 0)
+    distTag.Parent = ScreenGui
+    
+    local healthTag = Instance.new("TextLabel")
+    healthTag.Size = UDim2.new(0, 150, 0, 14)
+    healthTag.BackgroundTransparency = 1
+    healthTag.TextColor3 = Color3.fromRGB(50, 255, 50)
+    healthTag.TextSize = Config.ESP.TextSize - 1
+    healthTag.Font = Enum.Font.Gotham
+    healthTag.TextStrokeTransparency = 0.3
+    healthTag.TextStrokeColor3 = Color3.new(0, 0, 0)
+    healthTag.Parent = ScreenGui
+    
+    esp.Elements.Name = nameTag
+    esp.Elements.Distance = distTag
+    esp.Elements.Health = healthTag
+    
+    -- Actualizar loop
+    esp.Connection = RunService.RenderStepped:Connect(function()
+        if not Config.ESP.Enabled then
+            nameTag.Visible = false
+            distTag.Visible = false
+            healthTag.Visible = false
+            return
+        end
+        
+        if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then
+            nameTag.Visible = false
+            distTag.Visible = false
+            healthTag.Visible = false
+            return
+        end
+        
+        -- Team check
+        if Config.ESP.TeamCheck and not IsEnemy(player) then
+            nameTag.Visible = false
+            distTag.Visible = false
+            healthTag.Visible = false
+            return
+        end
+        
+        local hrp = player.Character.HumanoidRootPart
+        local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+        local pos, onScreen = Camera:WorldToViewportPoint(hrp.Position + Vector3.new(0, 3, 0))
+        
+        if not onScreen then
+            nameTag.Visible = false
+            distTag.Visible = false
+            healthTag.Visible = false
+            return
+        end
+        
+        local myHRP = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        local distance = myHRP and (myHRP.Position - hrp.Position).Magnitude or 0
+        
+        if distance > Config.ESP.MaxDistance then
+            nameTag.Visible = false
+            distTag.Visible = false
+            healthTag.Visible = false
+            return
+        end
+        
+        -- Actualizar posiciones
+        nameTag.Position = UDim2.new(0, pos.X - 75, 0, pos.Y - 45)
+        nameTag.Text = player.Name
+        nameTag.Visible = Config.ESP.ShowName
+        
+        distTag.Position = UDim2.new(0, pos.X - 75, 0, pos.Y - 30)
+        distTag.Text = math.floor(distance) .. "m"
+        distTag.Visible = Config.ESP.ShowDistance
+        
+        if humanoid then
+            healthTag.Position = UDim2.new(0, pos.X - 75, 0, pos.Y - 15)
+            healthTag.Text = math.floor(humanoid.Health) .. "/" .. math.floor(humanoid.MaxHealth)
+            healthTag.Visible = Config.ESP.ShowHealth
+        end
+    end)
+    
+    ESPObjects[player] = esp
+end
+
+--// Limpiar ESP
+local function RemoveESP(player)
+    local esp = ESPObjects[player]
+    if esp then
+        if esp.Connection then esp.Connection:Disconnect() end
+        for _, element in pairs(esp.Elements) do
+            if element then element:Destroy() end
+        end
+        ESPObjects[player] = nil
+    end
+end
+
+--// Inicializar ESP
+local function InitESP()
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            CreateESP(player)
+        end
+    end
+end
+
+--// Eventos
+Players.PlayerAdded:Connect(function(player)
+    if player ~= LocalPlayer then
+        CreateESP(player)
+    end
+end)
+
+Players.PlayerRemoving:Connect(RemoveESP)
+
+--// Main Loop
+RunService.RenderStepped:Connect(function()
+    RunAimbot()
+end)
+
+--// Iniciar
+CreateMobileUI()
+InitESP()
+
+--// NotificaciÃ³n de carga
+local Notify = Instance.new("TextLabel")
+Notify.Size = UDim2.new(0, 300, 0, 50)
+Notify.Position = UDim2.new(0.5, -150, 0.5, -25)
+Notify.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+Notify.Text = "AIMBOT MOBILE CARGADO\nPresiona el botÃ³n rojo para activar"
+Notify.TextColor3 = Color3.fromRGB(255, 255, 255)
+Notify.TextSize = 14
+Notify.Font = Enum.Font.GothamBold
+Notify.Parent = ScreenGui
+
+local NotifyCorner = Instance.new("UICorner")
+NotifyCorner.CornerRadius = UDim.new(0, 10)
+NotifyCorner.Parent = Notify
+
+delay(3, function()
+    TweenService:Create(Notify, TweenInfo.new(0.5), {BackgroundTransparency = 1, TextTransparency = 1}):Play()
+    delay(0.5, function() Notify:Destroy() end)
+end)
+
+print("=== AIMBOT MOBILE DELTA ===")
+print("BotÃ³n rojo/verde: Toggle aimbot")
+print("BotÃ³n âš™ï¸: ConfiguraciÃ³n")
+print("Arrastra el botÃ³n para moverlo")
